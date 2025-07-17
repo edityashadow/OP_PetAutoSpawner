@@ -1,197 +1,125 @@
--- OP_PetAutoSpawner.lua
--- Roblox OP Pet Auto-Spawner Script with auto-collect, auto-sell, multi-spawn, GUI, and upgrade system
+-- DarkSpawner.lua
+-- Simple Pet Spawner UI: Pet Name, Weight, Age, Spawn Button
 
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
-local SS = game:GetService("ServerStorage")
+local RS      = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
--- ========= KONFIGURASI =========
-local Config = {
-    INTERVAL = 3,                 -- Waktu spawn (detik)
-    MAX_PETS = 50,                -- Maksimal jumlah pet aktif
-    SPAWN_COUNT = 5,              -- Jumlah pet setiap spawn
-    PET_TEMPLATE = "Pet",         -- Nama model pet di ReplicatedStorage
-    SPAWN_AREA = "PetArea",       -- Nama folder/area di workspace untuk spawn
-    COLLECT_RANGE = 30,           -- Radius auto-collect coin
-    AUTO_SELL_INTERVAL = 10,      -- Waktu auto-sell coin
-    COIN_NAME = "GoldCoin",       -- Nama coin yang dikoleksi
-    SELL_EVENT_NAME = "SellEvent" -- Nama RemoteEvent di ReplicatedStorage
-}
+-- Konfigurasi
+local PET_TEMPLATE = "Pet"       -- Model di ReplicatedStorage
+local SPAWN_AREA   = "PetArea"   -- Part/Folder di Workspace
 
--- ========= SISTEM UPGRADE =========
-local Upgrades = {
-    SPAWN_SPEED = {level = 1, cost = 500, effect = 0.2},
-    PET_CAPACITY = {level = 1, cost = 1000, effect = 5},
-    COLLECT_RANGE = {level = 1, cost = 800, effect = 5}
-}
-
--- ========= STATE GLOBAL =========
-local enabled = true
-local activePets = {}
-local totalCoins = 0
-local playerStats = {}
-
--- ========= INISIALISASI =========
-local petModel = RS:WaitForChild(Config.PET_TEMPLATE)
-local spawnFolder = workspace:WaitForChild(Config.SPAWN_AREA)
-local sellEvent = RS:FindFirstChild(Config.SELL_EVENT_NAME) or Instance.new("RemoteEvent")
-sellEvent.Name = Config.SELL_EVENT_NAME
-sellEvent.Parent = RS
-
--- ========= FUNGSI: SPAWN PET =========
-local function spawnPet()
-    if not enabled or #activePets >= Config.MAX_PETS then return end
-
-    for i = 1, Config.SPAWN_COUNT do
-        local clone = petModel:Clone()
-        clone.Parent = spawnFolder
-
-        -- Posisi random di area spawn
-        local size = spawnFolder:GetExtentsSize() * 0.4
-        local position = Vector3.new(
-            spawnFolder.Position.X + math.random(-size.X, size.X),
-            spawnFolder.Position.Y + 3,
-            spawnFolder.Position.Z + math.random(-size.Z, size.Z)
-        )
-        if clone.PrimaryPart then
-            clone:SetPrimaryPartCFrame(CFrame.new(position))
-        end
-        table.insert(activePets, clone)
-
-        -- Auto-collect coin
-        coroutine.wrap(function()
-            while clone.Parent do
-                wait(0.5)
-                for _, coin in ipairs(workspace:GetChildren()) do
-                    if coin.Name == Config.COIN_NAME and (coin.Position - clone.PrimaryPart.Position).magnitude <= Config.COLLECT_RANGE then
-                        coin:Destroy()
-                        totalCoins += 1
-                    end
-                end
-            end
-        end)()
-    end
-end
-
--- ========= AUTO-SELL SYSTEM =========
-coroutine.wrap(function()
-    while true do
-        wait(Config.AUTO_SELL_INTERVAL)
-        if totalCoins > 0 then
-            sellEvent:FireServer(totalCoins)
-            totalCoins = 0
-        end
-    end
-end)()
-
--- ========= UPGRADE SYSTEM =========
-local function applyUpgrades()
-    Config.INTERVAL = math.max(0.5, 5 - (Upgrades.SPAWN_SPEED.level * Upgrades.SPAWN_SPEED.effect))
-    Config.MAX_PETS = 50 + (Upgrades.PET_CAPACITY.level * Upgrades.PET_CAPACITY.effect)
-    Config.COLLECT_RANGE = 30 + (Upgrades.COLLECT_RANGE.level * Upgrades.COLLECT_RANGE.effect)
-end
-
--- ========= GUI =========
-local function createOPGui(player)
+-- Utility: buat UI
+local function createGui(player)
     local gui = Instance.new("ScreenGui")
-    gui.Name = "PetSpawnerOPGUI"
+    gui.Name = "DarkSpawner"
+    gui.ResetOnSpawn = false
     gui.Parent = player:WaitForChild("PlayerGui")
-
+    
+    -- Frame utama
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 300, 0, 250)
-    frame.Position = UDim2.new(0.05, 0, 0.3, 0)
-    frame.BackgroundTransparency = 0.3
-    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.Size = UDim2.new(0, 350, 0, 200)
+    frame.Position = UDim2.new(0.5, -175, 0.5, -100)
+    frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    frame.BorderSizePixel = 0
     frame.Parent = gui
 
-    local toggleBtn = Instance.new("TextButton")
-    toggleBtn.Size = UDim2.new(0.9, 0, 0.15, 0)
-    toggleBtn.Position = UDim2.new(0.05, 0, 0.05, 0)
-    toggleBtn.Text = "PET SPAWNER: ON"
-    toggleBtn.Parent = frame
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 18
+    title.TextColor3 = Color3.new(1,1,1)
+    title.Text = "Pet Spawner"
+    title.Parent = frame
 
-    local statsLabel = Instance.new("TextLabel")
-    statsLabel.Size = UDim2.new(0.9, 0, 0.4, 0)
-    statsLabel.Position = UDim2.new(0.05, 0, 0.25, 0)
-    statsLabel.BackgroundTransparency = 1
-    statsLabel.TextXAlignment = Enum.TextXAlignment.Left
-    statsLabel.TextColor3 = Color3.new(1,1,1)
-    statsLabel.Text = "Loading stats..."
-    statsLabel.Parent = frame
+    -- Helper untuk input field
+    local function makeInput(labelText, yPos)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0, 100, 0, 25)
+        lbl.Position = UDim2.new(0, 10, 0, yPos)
+        lbl.BackgroundTransparency = 1
+        lbl.Font = Enum.Font.Gotham
+        lbl.TextSize = 14
+        lbl.TextColor3 = Color3.new(1,1,1)
+        lbl.Text = labelText
+        lbl.Parent = frame
 
-    local yPos = 0.7
-    for upgradeName, data in pairs(Upgrades) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.9, 0, 0.1, 0)
-        btn.Position = UDim2.new(0.05, 0, yPos, 0)
-        btn.Text = upgradeName.." (Lvl "..data.level..")"
-        btn.Parent = frame
-        yPos += 0.12
+        local txt = Instance.new("TextBox")
+        txt.Size = UDim2.new(0, 140, 0, 25)
+        txt.Position = UDim2.new(0, 120, 0, yPos)
+        txt.BackgroundColor3 = Color3.fromRGB(60,60,60)
+        txt.BorderSizePixel = 0
+        txt.Font = Enum.Font.Gotham
+        txt.TextSize = 14
+        txt.TextColor3 = Color3.new(1,1,1)
+        txt.Text = ""
+        txt.ClearTextOnFocus = false
+        txt.Parent = frame
+
+        return txt
     end
 
-    local function updateGUI()
-        toggleBtn.Text = "PET SPAWNER: " .. (enabled and "ON" or "OFF")
-        statsLabel.Text = string.format(
-            "Active Pets: %d/%d\nCoins: %d\nSpawn Speed: %.1fs\nCollect Range: %d",
-            #activePets, Config.MAX_PETS,
-            totalCoins,
-            Config.INTERVAL,
-            Config.COLLECT_RANGE
+    -- Input fields
+    local inpName   = makeInput("Pet Name:",   40)
+    local inpWeight = makeInput("Pet Weight:", 70)
+    local inpAge    = makeInput("Pet Age:",    100)
+
+    -- Spawn Button
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 100, 0, 30)
+    btn.Position = UDim2.new(0, 120, 0, 140)
+    btn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    btn.BorderSizePixel = 0
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 16
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.Text = "Spawn"
+    btn.Parent = frame
+
+    -- Fungsi Spawn
+    local function spawnPet()
+        local model = RS:FindFirstChild(PET_TEMPLATE)
+        local area  = Workspace:FindFirstChild(SPAWN_AREA)
+        if not model or not area then return end
+
+        local clone = model:Clone()
+        clone.Parent = area
+
+        -- Set posisi random dalam area
+        local size = (area:IsA("BasePart") and area.Size or Vector3.new(20,0,20)) * 0.5
+        local pos = Vector3.new(
+            area.Position.X + math.random(-size.X, size.X),
+            area.Position.Y + 2,
+            area.Position.Z + math.random(-size.Z, size.Z)
         )
+        if clone.PrimaryPart then
+            clone:SetPrimaryPartCFrame(CFrame.new(pos))
+        end
+
+        -- Assign Properties dari input
+        if inpName.Text ~= "" then
+            clone.Name = inpName.Text
+        end
+
+        -- Simpan weight & age sebagai Attribute
+        local w = tonumber(inpWeight.Text)
+        if w then clone:SetAttribute("Weight", w) end
+
+        local a = tonumber(inpAge.Text)
+        if a then clone:SetAttribute("Age", a) end
     end
 
-    toggleBtn.MouseButton1Click:Connect(function()
-        enabled = not enabled
-        updateGUI()
-    end)
-
-    for _, child in ipairs(frame:GetChildren()) do
-        if child:IsA("TextButton") and child ~= toggleBtn then
-            child.MouseButton1Click:Connect(function()
-                local upgradeName = string.split(child.Text, " ")[1]
-                local upgrade = Upgrades[upgradeName]
-                if playerStats[player] and playerStats[player] >= upgrade.cost then
-                    playerStats[player] -= upgrade.cost
-                    upgrade.level += 1
-                    upgrade.cost = math.floor(upgrade.cost * 1.5)
-                    child.Text = upgradeName.." (Lvl "..upgrade.level..")"
-                    applyUpgrades()
-                    updateGUI()
-                end
-            end)
-        end
-    end
-
-    coroutine.wrap(function()
-        while gui.Parent do
-            updateGUI()
-            wait(1)
-        end
-    end)()
+    -- Connect button
+    btn.MouseButton1Click:Connect(spawnPet)
 end
 
--- ========= MAIN LOOP =========
-coroutine.wrap(function()
-    while true do
-        if enabled then
-            spawnPet()
-        end
-        wait(Config.INTERVAL)
-    end
-end)()
-
--- ========= PLAYER HANDLER =========
-Players.PlayerAdded:Connect(function(player)
-    playerStats[player] = 0
-    player.CharacterAdded:Connect(function()
-        createOPGui(player)
-    end)
+-- Pasang GUI untuk setiap player
+Players.PlayerAdded:Connect(function(p)
+    createGui(p)
 end)
-
-game:BindToClose(function()
-    for _, pet in ipairs(activePets) do
-        if pet then pet:Destroy() end
-    end
-end)
-
-return "✅ OP Pet System Activated!"
+-- Untuk yang sudah di game ketika script jalan
+for _, p in ipairs(Players:GetPlayers()) do
+    createGui(p)
+end
